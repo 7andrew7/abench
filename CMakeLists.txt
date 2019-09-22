@@ -10,10 +10,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_CXX_FLAGS "-O0 -g -Wall -Werror ${CMAKE_CXX_FLAGS}")
 find_package(libmongocxx REQUIRED)
+find_package(gflags REQUIRED)
 
 add_executable(abench "${PROJECT_SOURCE_DIR}/main.cc")
 
-target_include_directories(abench PUBLIC
+target_include_directories(abench PRIVATE
    "${PROJECT_SOURCE_DIR}"
    "/usr/local/include"
    ${LIBMONGOCXX_INCLUDE_DIRS}
@@ -21,5 +22,5 @@ target_include_directories(abench PUBLIC
 
 find_library(LIBGLOG glog)
 find_library(LIBGFLAGS gflags)
-target_link_libraries(abench ${LIBGLOG} ${LIBGFLAGS} ${LIBMONGOCXX_LIBRARIES})
+target_link_libraries(abench ${LIBGLOG} gflags ${LIBMONGOCXX_LIBRARIES})
 
