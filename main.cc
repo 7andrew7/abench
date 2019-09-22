@@ -1,5 +1,6 @@
 #include <iostream>
 #include <memory>
+#include <thread>
 
 #include <bsoncxx/builder/stream/document.hpp>
 #include <bsoncxx/json.hpp>
@@ -21,18 +22,26 @@ using bsoncxx::builder::stream::open_document;
 DEFINE_string(uri, "mongodb://localhost:27017/", "Database URI");
 DEFINE_string(workload, "insert", "Workload");
 
+DEFINE_string(db_name, "testdb", "Database name");
+DEFINE_string(coll_name, "testcoll", "Collection name");
+
 //DEFINE_int64(operations, 0, "Database operations");
 DEFINE_int64(num_documents, 1024, "Number of database documents");
 DEFINE_int32(num_fields, 10, "Number of fields");
 DEFINE_int32(field_length, 100, "Value length in bytes");
-DEFINE_int32(num_threads, 1, "Number of threads");
+DEFINE_int32(num_threads, 2, "Number of threads");
 
-template<typename T>       // declaration only for TD;
-class TD;
+DEFINE_bool(reset, false, "Reset database prior to run");
+
+static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:;";
+
+struct Statistics {
+    int64_t successes;
+    int64_t failures;
+} __attribute__((__aligned__(64)));
 
 static std::string RandomString(size_t length) {
     auto randchar = []() -> char {
-        static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:;";
         const size_t max_index = sizeof(charset) - 1;
         return charset[rand() % max_index];
     };
@@ -54,36 +63,23 @@ static bsoncxx::document::value RandomDocument(int64_t id) {
     return doc << finalize;
 }
 
-class Workload {
-  public:
-    virtual ~Workload(){};
-    virtual void Run() = 0;
-};
+static void InsertWorkload(int32_t index) {
+    mongocxx::client conn{mongocxx::uri{FLAGS_uri}};
+    mongocxx::collection collection = conn[FLAGS_db_name][FLAGS_coll_name];
 
-class InsertWorkload : public Workload {
-  public:
-    InsertWorkload(int32_t index) {}
-    virtual void Run() {
-        mongocxx::instance inst{};
-        mongocxx::client conn{mongocxx::uri{FLAGS_uri}};        
-        mongocxx::collection collection = conn["testdb"]["testcollection"];
+    const int64_t first = index * FLAGS_num_documents / FLAGS_num_threads;
+    const int64_t last = first + FLAGS_num_documents / FLAGS_num_threads;
 
-        const int64_t first = index_ * FLAGS_num_documents / FLAGS_num_threads;
-        const int64_t last = first + FLAGS_num_documents / FLAGS_num_threads;
-
-        for (int64_t _id = first; _id < last; ++_id) {
-            bsoncxx::document::value x = RandomDocument(_id);
-            collection.insert_one(x.view());
-        }
-        //        std::cout << "Insert ID: " << res->inserted_id().get_int64() << std::endl;
+    for (int64_t _id = first; _id < last; ++_id) {
+        bsoncxx::document::value x = RandomDocument(_id);
+        collection.insert_one(x.view());
     }
+}
 
-  private:
-    int32_t index_;
-};
-    
-std::unique_ptr<Workload> CreateWorkload(int32_t index) {
-    return std::unique_ptr<Workload>{new InsertWorkload{index}};
+static void ResetDatabase() {
+    mongocxx::client conn{mongocxx::uri{FLAGS_uri}};        
+    mongocxx::collection collection = conn[FLAGS_db_name][FLAGS_coll_name];
+    collection.drop();
 }
 
 int main(int argc, char* argv[]) {
@@ -91,8 +87,22 @@ int main(int argc, char* argv[]) {
     google::InitGoogleLogging(argv[0]);
     google::InstallFailureSignalHandler();
 
-    auto x = CreateWorkload(0);
-    x->Run();
+    mongocxx::instance inst{};
+
+    if (FLAGS_reset) {
+        ResetDatabase();
+    }
+
+    std::function<void(int32_t)> func = InsertWorkload;
+
+    std::vector<std::thread> threads{};
+    for (int32_t t=0; t < FLAGS_num_threads; ++t) {
+        threads.push_back(std::thread{InsertWorkload, t});
+    }
+
+    for (auto &t : threads) {
+        t.join();
+    }
     //    LOG(INFO) << "Starting abench";
     
     //    auto cursor = collection.find({});
