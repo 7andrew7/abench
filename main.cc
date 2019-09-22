@@ -22,9 +22,10 @@ DEFINE_string(uri, "mongodb://localhost:27017/", "Database URI");
 DEFINE_string(workload, "insert", "Workload");
 
 //DEFINE_int64(operations, 0, "Database operations");
-DEFINE_int64(documents, 1024, "Number of database documents");
+DEFINE_int64(num_documents, 1024, "Number of database documents");
 DEFINE_int32(num_fields, 10, "Number of fields");
 DEFINE_int32(field_length, 100, "Value length in bytes");
+DEFINE_int32(num_threads, 1, "Number of threads");
 
 template<typename T>       // declaration only for TD;
 class TD;
@@ -61,22 +62,27 @@ class Workload {
 
 class InsertWorkload : public Workload {
   public:
-    InsertWorkload(size_t index) {}
+    InsertWorkload(int32_t index) {}
     virtual void Run() {
         mongocxx::instance inst{};
         mongocxx::client conn{mongocxx::uri{FLAGS_uri}};        
         mongocxx::collection collection = conn["testdb"]["testcollection"];
 
-        bsoncxx::document::value x = RandomDocument(0);
-        auto res = collection.insert_one(x.view());
-        std::cout << "Insert ID: " << res->inserted_id().get_int64() << std::endl;
+        const int64_t first = index_ * FLAGS_num_documents / FLAGS_num_threads;
+        const int64_t last = first + FLAGS_num_documents / FLAGS_num_threads;
+
+        for (int64_t _id = first; _id < last; ++_id) {
+            bsoncxx::document::value x = RandomDocument(_id);
+            collection.insert_one(x.view());
+        }
+        //        std::cout << "Insert ID: " << res->inserted_id().get_int64() << std::endl;
     }
 
   private:
-    //    size_t index_;
+    int32_t index_;
 };
     
-std::unique_ptr<Workload> CreateWorkload(size_t index) {
+std::unique_ptr<Workload> CreateWorkload(int32_t index) {
     return std::unique_ptr<Workload>{new InsertWorkload{index}};
 }
 
