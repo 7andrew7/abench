@@ -15,7 +15,6 @@
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
 
-#include <glog/logging.h>
 #include <gflags/gflags.h>
 
 using bsoncxx::builder::stream::close_array;
@@ -183,8 +182,6 @@ static void ResetDatabase() {
 
 int main(int argc, char* argv[]) {
     gflags::ParseCommandLineFlags(&argc, &argv, true);
-    google::InitGoogleLogging(argv[0]);
-    google::InstallFailureSignalHandler();
 
     mongocxx::instance inst{};
     mongocxx::pool pool{mongocxx::uri{FLAGS_uri}};

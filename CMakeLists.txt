@@ -20,7 +20,6 @@ target_include_directories(abench PRIVATE
    ${LIBMONGOCXX_INCLUDE_DIRS}
 )
 
-find_library(LIBGLOG glog)
 find_library(LIBGFLAGS gflags)
-target_link_libraries(abench ${LIBGLOG} gflags ${LIBMONGOCXX_LIBRARIES})
+target_link_libraries(abench gflags ${LIBMONGOCXX_LIBRARIES})
 
