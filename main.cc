@@ -6,6 +6,8 @@
 #include <thread>
 #include <random>
 
+#include <signal.h>
+
 #include <bsoncxx/builder/stream/document.hpp>
 #include <bsoncxx/json.hpp>
 #include <bsoncxx/types.hpp>
@@ -32,7 +34,7 @@ DEFINE_string(workload, "insert", "Workload");
 DEFINE_string(db_name, "testdb", "Database name");
 DEFINE_string(coll_name, "testcoll", "Collection name");
 
-DEFINE_int64(num_operations, 65536, "Database operations");
+DEFINE_int64(num_operations, 1<<20, "Database operations");
 DEFINE_int64(num_documents, 16384, "Number of database documents");
 DEFINE_int32(num_fields, 10, "Number of fields");
 DEFINE_int32(field_length, 100, "Value length in bytes");
@@ -180,7 +182,12 @@ static void ResetDatabase() {
     collection.drop();
 }
 
+static void SigintHandler(int signum) {
+    shutdown_requested = true;
+}
+
 int main(int argc, char* argv[]) {
+    signal(SIGINT, SigintHandler);
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
     mongocxx::instance inst{};
@@ -210,7 +217,7 @@ int main(int argc, char* argv[]) {
     SummarizeStats(&stats);
     double thousand = 1000;
     std::cout << "Operations: " << stats.stats[SUCCESSES] << " Elapsed time in milliseconds: "
-              << ms << " ms " <<  (thousand * stats.stats[SUCCESSES] / ms) << " req/sec"
+              << ms / thousand << " seconds " <<  (thousand * stats.stats[SUCCESSES] / ms) << " req/sec"
               << std::endl;
 
 }
