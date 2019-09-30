@@ -26,7 +26,7 @@ using bsoncxx::builder::stream::open_document;
 using bsoncxx::builder::basic::kvp;
 using bsoncxx::builder::basic::make_document;
 
-DEFINE_string(uri, "mongodb://localhost:27017/", "Database URI");
+DEFINE_string(uri, "mongodb://localhost:27017/admin?w=majority&journal=true&readConcernLevel=majority", "Database URI");
 DEFINE_string(workload, "insert", "Workload");
 
 DEFINE_string(db_name, "testdb", "Database name");
