@@ -2,12 +2,15 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <thread>
 #include <random>
 
 #include <bsoncxx/builder/stream/document.hpp>
 #include <bsoncxx/json.hpp>
 #include <bsoncxx/types.hpp>
+#include <bsoncxx/builder/basic/kvp.hpp>
+
 #include <mongocxx/pool.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
@@ -21,6 +24,7 @@ using bsoncxx::builder::stream::document;
 using bsoncxx::builder::stream::finalize;
 using bsoncxx::builder::stream::open_array;
 using bsoncxx::builder::stream::open_document;
+using bsoncxx::builder::basic::kvp;
 
 DEFINE_string(uri, "mongodb://localhost:27017/", "Database URI");
 DEFINE_string(workload, "insert", "Workload");
@@ -36,6 +40,22 @@ DEFINE_int32(num_threads, 2, "Number of threads");
 
 DEFINE_bool(reset, false, "Reset database prior to run");
 
+using WorkloadFunc = std::function<void(mongocxx::pool *, int32_t)>;
+
+static void InsertWorkload(mongocxx::pool *pool, int32_t index);
+static void FetchAllWorkload(mongocxx::pool *pool, int32_t index);
+
+static const std::map<std::string, WorkloadFunc> workloads= {
+    {"insert", InsertWorkload}, {"find", FetchAllWorkload}
+};
+
+static bool ValidateWorkload(const char* flagname, const std::string &value) {
+    auto it = workloads.find(value);
+    return (it != workloads.end());
+}
+
+DEFINE_validator(workload, &ValidateWorkload);
+
 static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:;";
 
 static const int MAX_THREADS = 256;
@@ -48,15 +68,14 @@ static struct Statistics {
 
 #define INCREMENT_STAT(INDEX, STAT) (threads_stats[INDEX].stats[STAT] = threads_stats[INDEX].stats[STAT] + 1)
 
-/*
+
 static std::atomic<bool> shutdown_requested{false};
 
-static inline int64_t RandomDocumentIndex() {
+static inline int64_t GetRandomDocumentIndex() {
     static thread_local std::mt19937 generator;
     std::uniform_int_distribution<int64_t> distribution(0, FLAGS_num_documents - 1);
     return distribution(generator);
 }
-*/
 
 static void SummarizeStats(Statistics *summary_stats) {
 
@@ -104,25 +123,26 @@ static void InsertWorkload(mongocxx::pool *pool, int32_t index) {
     }
 }
 
-/*
-static void FetchAllWorkload(int32_t index) {
-    bsoncxx::types::b_int64 index = {j};
-    coll.insert_one(bsoncxx::builder::basic::make_document(kvp("x", index)));
 
-    mongocxx::collection collection = conn[FLAGS_db_name][FLAGS_coll_name];
+static void FetchAllWorkload(mongocxx::pool *pool, int32_t index) {
+    auto client = pool->acquire();
+    mongocxx::collection collection = (*client)[FLAGS_db_name][FLAGS_coll_name];
 
-    //    Statistics *stats = &statistics[index];
-    const int64_t first = index * FLAGS_num_documents / FLAGS_num_threads;
-    const int64_t last = first + FLAGS_num_documents / FLAGS_num_threads;
+    const int64_t num_ops =  FLAGS_num_operations / FLAGS_num_threads;
+    int64_t op = 0;
 
-    doc << "_id" << bsoncxx::types::b_int64{id};
-    for (int64_t _id = first; _id < last; ++_id) {
-        bsoncxx::document::value x = CreateRandomDocument(_id);
-        collection.insert_one(x.view());
+    while (!shutdown_requested) {
+        bsoncxx::types::b_int64 _id = {GetRandomDocumentIndex()};
+        auto doc = bsoncxx::builder::basic::make_document(kvp("_id", _id));
+
+        auto result = collection.find_one(doc.view());
         INCREMENT_STAT(index, SUCCESSES);
+        if (++op >= num_ops) {
+            shutdown_requested = true;
+            break;
+        }
     }
 }
-*/
 
 static void ResetDatabase() {
     mongocxx::client conn{mongocxx::uri{FLAGS_uri}};
@@ -142,13 +162,13 @@ int main(int argc, char* argv[]) {
         ResetDatabase();
     }
 
-    std::function<void(mongocxx::pool *, int32_t)> func = InsertWorkload;
+    auto workload = workloads.at(FLAGS_workload);
     std::vector<std::thread> threads{};
 
     auto start = std::chrono::steady_clock::now();
 
     for (int32_t t=0; t < FLAGS_num_threads; ++t) {
-        threads.push_back(std::thread{InsertWorkload, &pool, t});
+        threads.push_back(std::thread{workload, &pool, t});
     }
 
     for (auto &t : threads) {
