@@ -1,3 +1,5 @@
+#include <atomic>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -26,7 +28,7 @@ DEFINE_string(db_name, "testdb", "Database name");
 DEFINE_string(coll_name, "testcoll", "Collection name");
 
 //DEFINE_int64(operations, 0, "Database operations");
-DEFINE_int64(num_documents, 1024, "Number of database documents");
+DEFINE_int64(num_documents, 16384, "Number of database documents");
 DEFINE_int32(num_fields, 10, "Number of fields");
 DEFINE_int32(field_length, 100, "Value length in bytes");
 DEFINE_int32(num_threads, 2, "Number of threads");
@@ -35,10 +37,24 @@ DEFINE_bool(reset, false, "Reset database prior to run");
 
 static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:;";
 
-struct Statistics {
-    int64_t successes;
-    int64_t failures;
-} __attribute__((__aligned__(64)));
+static const int MAX_THREADS = 256;
+
+enum Stats {SUCCESSES=0, FAILURES, LAST_STAT};
+
+static struct Statistics {
+    std::atomic_int64_t stats[LAST_STAT];
+} __attribute__((__aligned__(64))) threads_stats[MAX_THREADS];
+
+#define INCREMENT_STAT(INDEX, STAT) (threads_stats[INDEX].stats[STAT] = threads_stats[INDEX].stats[STAT] + 1)
+
+static void SummarizeStats(Statistics *summary_stats) {
+
+    for (size_t fi=0; fi < LAST_STAT; ++fi) {
+        for (int32_t ti=0; ti < FLAGS_num_threads; ++ti) {
+            summary_stats->stats[fi] = summary_stats->stats[fi] + threads_stats[ti].stats[fi];
+        }
+    }
+}
 
 static std::string RandomString(size_t length) {
     auto randchar = []() -> char {
@@ -67,12 +83,14 @@ static void InsertWorkload(int32_t index) {
     mongocxx::client conn{mongocxx::uri{FLAGS_uri}};
     mongocxx::collection collection = conn[FLAGS_db_name][FLAGS_coll_name];
 
+    //    Statistics *stats = &statistics[index];
     const int64_t first = index * FLAGS_num_documents / FLAGS_num_threads;
     const int64_t last = first + FLAGS_num_documents / FLAGS_num_threads;
 
     for (int64_t _id = first; _id < last; ++_id) {
         bsoncxx::document::value x = RandomDocument(_id);
         collection.insert_one(x.view());
+        INCREMENT_STAT(index, SUCCESSES);
     }
 }
 
@@ -94,8 +112,10 @@ int main(int argc, char* argv[]) {
     }
 
     std::function<void(int32_t)> func = InsertWorkload;
-
     std::vector<std::thread> threads{};
+
+    auto start = std::chrono::steady_clock::now();
+
     for (int32_t t=0; t < FLAGS_num_threads; ++t) {
         threads.push_back(std::thread{InsertWorkload, t});
     }
@@ -103,11 +123,15 @@ int main(int argc, char* argv[]) {
     for (auto &t : threads) {
         t.join();
     }
-    //    LOG(INFO) << "Starting abench";
-    
-    //    auto cursor = collection.find({});
 
-    //    for (const auto& doc : cursor) {
-    //  std::cout << bsoncxx::to_json(doc) << std::endl;
-    //    }
+    auto end = std::chrono::steady_clock::now();
+    auto ms =  std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    Statistics stats{};
+    SummarizeStats(&stats);
+    double thousand = 1000;
+    std::cout << "Operations: " << stats.stats[SUCCESSES] << " Elapsed time in milliseconds: "
+              << ms << " ms " <<  (thousand * stats.stats[SUCCESSES] / ms) << " req/sec"
+              << std::endl;
+
 }
